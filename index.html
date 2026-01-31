@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>부품 횟수 분석기</title>
+<style>
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    padding: 20px;
+    background-color: #f9fafb;
+    margin: 0;
+  }
+  h2 {
+    text-align: center;
+    color: #333;
+    margin-bottom: 15px;
+  }
+  textarea {
+    width: 100%;
+    min-height: 150px;
+    padding: 12px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    resize: vertical;
+    box-sizing: border-box;
+    background: #fff;
+  }
+  .button-group {
+    text-align: center;
+    margin-top: 10px;
+  }
+  button {
+    background-color: #4f46e5;
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    font-size: 14px;
+    border-radius: 10px;
+    margin: 5px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+  button:hover { background-color: #4338ca; }
+  button.secondary { background-color: #6b7280; }
+  button.secondary:hover { background-color: #4b5563; }
+  button.download { background-color: #10b981; }
+  button.download:hover { background-color: #059669; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    background-color: white;
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 10px;
+    text-align: center;
+    border-bottom: 1px solid #eee;
+  }
+  th {
+    background-color: #f3f4f6;
+    font-weight: bold;
+  }
+  .empty {
+    margin-top: 15px;
+    padding: 14px;
+    text-align: center;
+    color: #6b7280;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+  }
+  @media (max-width: 600px) {
+    th, td { font-size: 12px; padding: 8px; }
+    textarea { min-height: 120px; }
+  }
+</style>
+</head>
+<body>
+<h2>📊 부품 횟수 분석기</h2>
+
+<textarea id="inputText" placeholder="여기에 데이터를 붙여넣으세요..."></textarea>
+
+<div class="button-group">
+  <button id="analyzeBtn">분석하기</button>
+  <button id="resetBtn" class="secondary">초기화</button>
+  <button id="downloadBtn" class="download" style="display:none;">CSV 다운로드</button>
+</div>
+
+<div id="output" class="empty">결과가 여기에 표시됩니다.</div>
+
+<script>
+document.getElementById('analyzeBtn').addEventListener('click', function () {
+  const text = document.getElementById('inputText').value.trim();
+  if (!text) {
+    alert("데이터를 입력하세요.");
+    return;
+  }
+
+  const lines = text.split(/\r?\n/);
+  const counts = {};
+
+  lines.forEach(line => {
+    // 한 줄에 여러 항목: 탭 또는 2칸 이상 공백 기준 분리
+    const items = line.split(/\t+|\s{2,}/);
+    items.forEach(item => {
+      let cleaned = item.trim();
+      if (!cleaned) return;
+
+      // 앞 숫자 제거: "05)" "10)" "01)" 등
+      cleaned = cleaned.replace(/^\s*\d+\)\s*/, '');
+
+      /**
+       * ✅ 핵심 수정 반영:
+       * - 모델명 뒤에 ')' 앞/뒤 공백이 있어도 인식 (예: "W9 )좌측...")
+       * - 모델 뒤 ')'이 없던 케이스도 허용 (예: "S9 엔드캡")
+       * - 모델은 (S9, W9, W1, I9, J9 등) "영문+숫자" 또는 "디어"
+       *
+       * 예:
+       *  "W9 )좌측 뒤 포크 스티커" -> model=W9, part=좌측 뒤 포크 스티커
+       *  "W9)좌측 뒤 포크 스티커"  -> model=W9, part=좌측 뒤 포크 스티커
+       *  "S9 엔드캡"               -> model=S9, part=엔드캡
+       */
+      const match = cleaned.match(/^((?:디어)|[A-Z]\d+)\s*\)?\s*(.+)$/i);
+      if (!match) return;
+
+      // 모델명 정리 (영문은 대문자)
+      let modelRaw = match[1].trim();
+      let model = modelRaw.includes("디어") ? "디어" : modelRaw.toUpperCase();
+
+      // 부품명: ')' 뒤의 모든 내용을 통째로 (앞/뒤 공백만 정리)
+      let part = match[2].trim();
+      if (!part) return;
+
+      const key = model + '|' + part;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+  });
+
+  const entries = Object.entries(counts);
+  if (!entries.length) {
+    document.getElementById('output').className = 'empty';
+    document.getElementById('output').innerHTML = '인식된 항목이 없습니다. 입력 형식을 확인해주세요.';
+    document.getElementById('downloadBtn').style.display = 'none';
+    return;
+  }
+
+  // 모델 정렬 순서: S9 → W9 → W1 → 디어 → I9 → 그 외
+  const modelOrder = ["S9", "W9", "W1", "디어", "I9"];
+  const sorted = entries.sort((a, b) => {
+    const [modelA, partA] = a[0].split('|');
+    const [modelB, partB] = b[0].split('|');
+
+    const idxA = modelOrder.indexOf(modelA) !== -1 ? modelOrder.indexOf(modelA) : modelOrder.length;
+    const idxB = modelOrder.indexOf(modelB) !== -1 ? modelOrder.indexOf(modelB) : modelOrder.length;
+
+    if (idxA !== idxB) return idxA - idxB;          // 모델 순서 우선
+    if (modelA !== modelB) return modelA.localeCompare(modelB, 'ko'); // 모델명 정렬
+    if (a[1] !== b[1]) return b[1] - a[1];          // 등장횟수 내림차순
+    return partA.localeCompare(partB, 'ko');        // 부품명 가나다
+  });
+
+  // 표 생성
+  let tableHTML = '<table><tr><th>모델명</th><th>부품명</th><th>등장횟수</th></tr>';
+  sorted.forEach(([key, count]) => {
+    const [model, part] = key.split('|');
+    tableHTML += `<tr><td>${escapeHtml(model)}</td><td>${escapeHtml(part)}</td><td>${count}</td></tr>`;
+  });
+  tableHTML += '</table>';
+
+  const output = document.getElementById('output');
+  output.className = '';
+  output.innerHTML = tableHTML;
+
+  // CSV 다운로드
+  const downloadBtn = document.getElementById('downloadBtn');
+  downloadBtn.style.display = 'inline-block';
+  downloadBtn.onclick = function () {
+    let csv = "모델명,부품명,등장횟수\n";
+    sorted.forEach(([key, count]) => {
+      const [model, part] = key.split('|');
+      const safePart = `"${(part || '').replace(/"/g, '""')}"`;
+      csv += `${model},${safePart},${count}\n`;
+    });
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "부품횟수분석.csv";
+    link.click();
+  };
+});
+
+document.getElementById('resetBtn').addEventListener('click', function () {
+  document.getElementById('inputText').value = "";
+  const output = document.getElementById('output');
+  output.className = 'empty';
+  output.innerHTML = "결과가 여기에 표시됩니다.";
+  document.getElementById('downloadBtn').style.display = "none";
+});
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, s => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[s]));
+}
+</script>
+</body>
+</html>
